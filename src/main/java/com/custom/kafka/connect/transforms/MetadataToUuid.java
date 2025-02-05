@@ -3,52 +3,48 @@ package com.custom.kafka.connect.transforms;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.connect.connector.ConnectRecord;
 import org.apache.kafka.connect.transforms.Transformation;
-import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.common.config.ConfigDef.Importance;
-import org.apache.kafka.common.config.ConfigDef.Type;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import java.util.zip.CRC32;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class MetadataToUuid<R extends ConnectRecord<R>> implements Transformation<R> {
-    private static final String FIELD_CONFIG = "field.name";
     private static final ObjectMapper mapper = new ObjectMapper();
-    private String fieldName;
 
     @Override
     public R apply(R record) {
-        if (record.value() == null) {
-            throw new RuntimeException("Record value (metadata) cannot be null");
-        }
-
-        Map<String, Object> metadata;
         try {
-            if (record.value() instanceof Map) {
-                metadata = (Map<String, Object>) record.value();
+            JsonNode rootNode;
+            if (record.value() instanceof String) {
+                rootNode = mapper.readTree((String) record.value());
+            } else if (record.value() instanceof Map) {
+                rootNode = mapper.valueToTree(record.value());
             } else {
-                metadata = mapper.readValue(record.value().toString(), Map.class);
+                rootNode = mapper.valueToTree(record.value());
             }
 
-            // Verificar campos requeridos
-            if (!metadata.containsKey("kafka_key") || !metadata.containsKey("kafka_position") ||
-                    !metadata.containsKey("kafka_timestamp") || !metadata.containsKey("kafka_topic")) {
-                throw new RuntimeException("Missing required metadata fields");
+            // Navegar a la sección metadata
+            JsonNode metadataNode = rootNode.path("metadata");
+            if (metadataNode.isMissingNode()) {
+                throw new RuntimeException("Metadata section not found in message");
             }
 
             // Extraer los campos necesarios
-            String kafkaKey = metadata.get("kafka_key").toString();
-            String kafkaPosition = metadata.get("kafka_position").toString();
-            String kafkaTimestamp = metadata.get("kafka_timestamp").toString();
-            String kafkaTopic = metadata.get("kafka_topic").toString();
+            String kafkaKey = metadataNode.path("kafka_key").asText();
+            String kafkaPosition = metadataNode.path("kafka_position").asText();
+            String kafkaTimestamp = metadataNode.path("kafka_timestamp").asText();
+            String kafkaTopic = metadataNode.path("kafka_topic").asText();
 
-            // Combinar campos
+            if (kafkaKey.isEmpty() || kafkaPosition.isEmpty() ||
+                    kafkaTimestamp.isEmpty() || kafkaTopic.isEmpty()) {
+                throw new RuntimeException("Missing required metadata fields");
+            }
+
+            // Combinar campos para generar UUID
             String combined = String.join("", kafkaKey, kafkaPosition, kafkaTimestamp, kafkaTopic);
-
-            // Generar UUID
             UUID uuid = generateUUID(combined);
 
             return record.newRecord(
@@ -81,16 +77,12 @@ public class MetadataToUuid<R extends ConnectRecord<R>> implements Transformatio
 
     @Override
     public ConfigDef config() {
-        return new ConfigDef()
-                .define(FIELD_CONFIG, Type.STRING, "key", Importance.HIGH,
-                        "Field name for the UUID");
+        return new ConfigDef();
     }
 
     @Override
     public void close() {}
 
     @Override
-    public void configure(Map<String, ?> configs) {
-        fieldName = configs.get(FIELD_CONFIG).toString();
-    }
+    public void configure(Map<String, ?> configs) {}
 }

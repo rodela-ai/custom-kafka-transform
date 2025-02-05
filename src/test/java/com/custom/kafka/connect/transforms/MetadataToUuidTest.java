@@ -1,3 +1,4 @@
+// MetadataToUuidTest.java
 package com.custom.kafka.connect.transforms;
 
 import org.apache.kafka.connect.source.SourceRecord;
@@ -12,32 +13,27 @@ public class MetadataToUuidTest {
     public void testUuidGeneration() {
         MetadataToUuid<SourceRecord> transform = new MetadataToUuid<>();
 
-        // Crear un map simulando los metadatos
+        // Crear un mensaje Activity Streams completo con metadata
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("kafka_key", "1738766601");
         metadata.put("kafka_position", 1);
         metadata.put("kafka_timestamp", 1738766601592L);
         metadata.put("kafka_topic", "operation-output");
 
-        // Crear las estructuras necesarias para el SourceRecord
-        HashMap<String, Object> sourcePartition = new HashMap<>();
-        HashMap<String, Object> sourceOffset = new HashMap<>();
+        Map<String, Object> activityStream = new HashMap<>();
+        activityStream.put("@context", "https://www.w3.org/ns/activitystreams");
+        activityStream.put("metadata", metadata);
 
-        // Crear el SourceRecord con los metadatos
+        // Crear el SourceRecord
         SourceRecord record = new SourceRecord(
-                sourcePartition,
-                sourceOffset,
-                "test-topic",
-                null,  // key schema
-                null,  // key
-                null,  // value schema
-                metadata  // value (metadata map)
+                new HashMap<>(),  // sourcePartition
+                new HashMap<>(),  // sourceOffset
+                "test-topic",     // topic
+                null,            // keySchema
+                null,            // key
+                null,            // valueSchema
+                activityStream   // value
         );
-
-        // Configurar la transformación
-        Map<String, String> configs = new HashMap<>();
-        configs.put("field.name", "key");
-        transform.configure(configs);
 
         // Aplicar la transformación
         SourceRecord transformed = transform.apply(record);
@@ -48,40 +44,34 @@ public class MetadataToUuidTest {
 
         String uuid = transformed.key().toString();
 
-        // Verificar que es un UUID válido
+        // Verificar formato UUID
         assertEquals("El UUID debería tener 36 caracteres", 36, uuid.length());
         assertTrue("El UUID debería contener guiones", uuid.contains("-"));
 
-        // Verificar que la transformación es determinista
+        // Verificar determinismo
         SourceRecord transformed2 = transform.apply(record);
         assertEquals("La misma entrada debería producir el mismo UUID",
                 transformed.key(), transformed2.key());
     }
 
-    @Test
-    public void testNullMetadata() {
+    @Test(expected = RuntimeException.class)
+    public void testMissingMetadata() {
         MetadataToUuid<SourceRecord> transform = new MetadataToUuid<>();
 
-        // Configurar la transformación
-        Map<String, String> configs = new HashMap<>();
-        configs.put("field.name", "key");
-        transform.configure(configs);
+        // Crear mensaje sin metadata
+        Map<String, Object> activityStream = new HashMap<>();
+        activityStream.put("@context", "https://www.w3.org/ns/activitystreams");
 
-        // Crear un SourceRecord con valor null
         SourceRecord record = new SourceRecord(
                 new HashMap<>(),
                 new HashMap<>(),
                 "test-topic",
                 null,
-                null
+                null,
+                null,
+                activityStream
         );
 
-        try {
-            transform.apply(record);
-            fail("Debería haber lanzado una excepción con metadata null");
-        } catch (RuntimeException e) {
-            assertTrue("El mensaje de error debería mencionar metadata",
-                    e.getMessage().contains("metadata"));
-        }
+        transform.apply(record);  // Debería lanzar RuntimeException
     }
 }
